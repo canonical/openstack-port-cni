@@ -9,9 +9,10 @@ const (
 
 // AddRequest is sent by the thin CNI to create a Neutron port.
 type AddRequest struct {
-	ContainerID string `json:"container_id"`
-	NetworkID   string `json:"network_id"`
-	SubnetID    string `json:"subnet_id"`
+	ContainerID      string   `json:"container_id"`
+	NetworkID        string   `json:"network_id"`
+	SubnetID         string   `json:"subnet_id"`
+	SecurityGroupIDs []string `json:"security_group_ids,omitempty"`
 }
 
 // AddResponse returns the Neutron port details needed for OVS delegation.

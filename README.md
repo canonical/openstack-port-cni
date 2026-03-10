@@ -47,11 +47,20 @@ Example NetworkAttachmentDefinition config:
   "network_id": "<neutron-network-uuid>",
   "subnet_id": "<neutron-subnet-uuid>",
   "delegate_plugin": "ovs",
-  "bridge": "br-int"
+  "bridge": "br-int",
+  "security_group_ids": "<sg-uuid-1>,<sg-uuid-2>"
 }
 ```
 
-An optional `"socket_path"` field can override the default daemon socket path (`/var/run/openstack-cni/cni.sock`).
+| Field | Required | Description |
+|---|---|---|
+| `network_id` | yes | Neutron network UUID |
+| `subnet_id` | yes | Neutron subnet UUID |
+| `delegate_plugin` | yes | CNI plugin to delegate to (e.g. `ovs`) |
+| `bridge` | yes | OVS bridge name (e.g. `br-int`) |
+| `security_group_ids` | no | Comma-separated Neutron security group UUIDs to apply to the port. When omitted, Neutron applies the default security group. |
+| `socket_path` | no | Override the daemon socket path (default: `/var/run/openstack-cni/cni.sock`) |
+| `socket_file` | no | OVS OVSDB socket path (e.g. `unix:/var/snap/microovn/common/run/switch/db.sock`); passed through to the delegated ovs-cni plugin. |
 
 ## Build
 

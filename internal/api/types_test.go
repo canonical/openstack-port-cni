@@ -39,7 +39,7 @@ func TestAddRequestJSON(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if got != orig {
+	if !reflect.DeepEqual(got, orig) {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", got, orig)
 	}
 }
@@ -170,7 +170,7 @@ func TestAddRequestEmptyFields(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("Unmarshal zero value: %v", err)
 	}
-	if got != orig {
+	if !reflect.DeepEqual(got, orig) {
 		t.Errorf("zero-value round-trip mismatch: got %+v, want %+v", got, orig)
 	}
 }
@@ -240,6 +240,17 @@ func TestJSONFieldNames(t *testing.T) {
 			target:   &ErrorResponse{},
 			expected: &ErrorResponse{Error: "bad"},
 		},
+		{
+			name:    "AddRequestWithSecurityGroupIDs",
+			jsonStr: `{"container_id":"c","network_id":"n","subnet_id":"s","security_group_ids":["sg-1","sg-2"]}`,
+			target:  &AddRequest{},
+			expected: &AddRequest{
+				ContainerID:      "c",
+				NetworkID:        "n",
+				SubnetID:         "s",
+				SecurityGroupIDs: []string{"sg-1", "sg-2"},
+			},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,5 +261,51 @@ func TestJSONFieldNames(t *testing.T) {
 				t.Errorf("got %+v, want %+v", tc.target, tc.expected)
 			}
 		})
+	}
+}
+
+func TestAddRequestSecurityGroupIDsRoundTrip(t *testing.T) {
+	orig := AddRequest{
+		ContainerID:      "ctr-1",
+		NetworkID:        "net-1",
+		SubnetID:         "sub-1",
+		SecurityGroupIDs: []string{"sg-id-1", "sg-id-2"},
+	}
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal to map: %v", err)
+	}
+	if _, ok := raw["security_group_ids"]; !ok {
+		t.Error("expected JSON key 'security_group_ids' not found")
+	}
+	var got AddRequest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(got, orig) {
+		t.Errorf("round-trip mismatch: got %+v, want %+v", got, orig)
+	}
+}
+
+func TestAddRequestSecurityGroupIDsOmittedWhenEmpty(t *testing.T) {
+	orig := AddRequest{
+		ContainerID: "ctr-1",
+		NetworkID:   "net-1",
+		SubnetID:    "sub-1",
+	}
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal to map: %v", err)
+	}
+	if _, ok := raw["security_group_ids"]; ok {
+		t.Error("expected 'security_group_ids' to be omitted when empty")
 	}
 }
