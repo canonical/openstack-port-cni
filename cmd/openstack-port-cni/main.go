@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/containernetworking/cni/pkg/invoke"
 	"github.com/containernetworking/cni/pkg/skel"
@@ -21,10 +22,11 @@ import (
 // PluginConf is the config for the openstack-port wrapper CNI plugin.
 type PluginConf struct {
 	ovs_types.NetConf
-	NetworkID      string `json:"network_id"`
-	SubnetID       string `json:"subnet_id"`
-	DelegatePlugin string `json:"delegate_plugin"`
-	SocketPath     string `json:"socket_path,omitempty"`
+	NetworkID        string `json:"network_id"`
+	SubnetID         string `json:"subnet_id"`
+	SecurityGroupIDs string `json:"security_group_ids,omitempty"`
+	DelegatePlugin   string `json:"delegate_plugin"`
+	SocketPath       string `json:"socket_path,omitempty"`
 }
 
 func (c *PluginConf) socketPath() string {
@@ -88,11 +90,19 @@ func cmdAdd(args *skel.CmdArgs) error {
 
 	socketPath := conf.socketPath()
 
+	var securityGroupIDs []string
+	for _, id := range strings.Split(conf.SecurityGroupIDs, ",") {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			securityGroupIDs = append(securityGroupIDs, trimmed)
+		}
+	}
+
 	var resp api.AddResponse
 	err := daemonRequest(socketPath, http.MethodPost, "/add", api.AddRequest{
-		ContainerID: args.ContainerID,
-		NetworkID:   conf.NetworkID,
-		SubnetID:    conf.SubnetID,
+		ContainerID:      args.ContainerID,
+		NetworkID:        conf.NetworkID,
+		SubnetID:         conf.SubnetID,
+		SecurityGroupIDs: securityGroupIDs,
 	}, &resp)
 	if err != nil {
 		return err

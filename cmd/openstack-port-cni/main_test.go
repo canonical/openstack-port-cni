@@ -343,3 +343,141 @@ func TestIntegrationCmdAddDaemonDown(t *testing.T) {
 		t.Fatalf("expected connection error, got: %v", err)
 	}
 }
+
+func makeStdinDataWithSGs(sock, sgIDs string) []byte {
+	data, _ := json.Marshal(map[string]interface{}{
+		"cniVersion":         "0.4.0",
+		"type":               "openstack-port-cni",
+		"network_id":         "net-uuid",
+		"subnet_id":          "subnet-uuid",
+		"delegate_plugin":    "ovs",
+		"socket_path":        sock,
+		"bridge":             "br-int",
+		"security_group_ids": sgIDs,
+	})
+	return data
+}
+
+func TestCmdAddForwardsSecurityGroupIDs(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "test.sock")
+	listener, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sgIDsCh := make(chan []string, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
+		var req api.AddRequest
+		if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
+			http.Error(w, decErr.Error(), http.StatusBadRequest)
+			return
+		}
+		sgIDsCh <- req.SecurityGroupIDs
+		_ = json.NewEncoder(w).Encode(api.AddResponse{
+			PortID:       "port-123",
+			MACAddress:   "fa:16:3e:aa:bb:cc",
+			IPAddress:    "10.0.0.5",
+			PrefixLength: "24",
+			GatewayIP:    "10.0.0.1",
+		})
+	})
+	mux.HandleFunc("/del", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.DelResponse{OK: true})
+	})
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(listener) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	cniPath := setupFakeDelegatePlugin(t)
+	t.Setenv("CNI_PATH", cniPath)
+
+	args := &skel.CmdArgs{
+		ContainerID: "ctr-sg-1",
+		Netns:       "/proc/1/ns/net",
+		IfName:      "eth0",
+		StdinData:   makeStdinDataWithSGs(sock, "sg-id-1, sg-id-2"),
+	}
+
+	oldStdout := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+
+	cmdErr := cmdAdd(args)
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+
+	if cmdErr != nil {
+		t.Fatalf("cmdAdd returned error: %v", cmdErr)
+	}
+	receivedSGIDs := <-sgIDsCh
+	if len(receivedSGIDs) != 2 {
+		t.Fatalf("expected 2 security group IDs forwarded, got %d: %v", len(receivedSGIDs), receivedSGIDs)
+	}
+	if receivedSGIDs[0] != "sg-id-1" {
+		t.Errorf("expected first SG ID 'sg-id-1', got %q", receivedSGIDs[0])
+	}
+	if receivedSGIDs[1] != "sg-id-2" {
+		t.Errorf("expected second SG ID 'sg-id-2', got %q", receivedSGIDs[1])
+	}
+}
+
+func TestCmdAddNoSecurityGroupIDs(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "test.sock")
+	listener, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sgIDsCh := make(chan []string, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
+		var req api.AddRequest
+		if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
+			http.Error(w, decErr.Error(), http.StatusBadRequest)
+			return
+		}
+		sgIDsCh <- req.SecurityGroupIDs
+		_ = json.NewEncoder(w).Encode(api.AddResponse{
+			PortID:       "port-123",
+			MACAddress:   "fa:16:3e:aa:bb:cc",
+			IPAddress:    "10.0.0.5",
+			PrefixLength: "24",
+			GatewayIP:    "10.0.0.1",
+		})
+	})
+	mux.HandleFunc("/del", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.DelResponse{OK: true})
+	})
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(listener) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	cniPath := setupFakeDelegatePlugin(t)
+	t.Setenv("CNI_PATH", cniPath)
+
+	args := &skel.CmdArgs{
+		ContainerID: "ctr-no-sg",
+		Netns:       "/proc/1/ns/net",
+		IfName:      "eth0",
+		StdinData:   makeStdinData(sock),
+	}
+
+	oldStdout := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+
+	cmdErr := cmdAdd(args)
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+
+	if cmdErr != nil {
+		t.Fatalf("cmdAdd returned error: %v", cmdErr)
+	}
+	receivedSGIDs := <-sgIDsCh
+	if len(receivedSGIDs) != 0 {
+		t.Errorf("expected no security group IDs, got %v", receivedSGIDs)
+	}
+}

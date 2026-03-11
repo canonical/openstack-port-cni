@@ -103,7 +103,11 @@ func newHandler(neutronClient *gophercloud.ServiceClient) http.Handler {
 			writeError(w, http.StatusBadRequest, "container_id, network_id, and subnet_id are required")
 			return
 		}
-		log.Printf("ADD container_id=%s network_id=%s subnet_id=%s", req.ContainerID, req.NetworkID, req.SubnetID)
+		logMsg := fmt.Sprintf("ADD container_id=%s network_id=%s subnet_id=%s", req.ContainerID, req.NetworkID, req.SubnetID)
+		if len(req.SecurityGroupIDs) > 0 {
+			logMsg += fmt.Sprintf(" security_group_ids=%v", req.SecurityGroupIDs)
+		}
+		log.Print(logMsg)
 
 		name := portName(req.ContainerID)
 		createOpts := ports.CreateOpts{
@@ -112,6 +116,9 @@ func newHandler(neutronClient *gophercloud.ServiceClient) http.Handler {
 			FixedIPs: []ports.IP{
 				{SubnetID: req.SubnetID},
 			},
+		}
+		if len(req.SecurityGroupIDs) > 0 {
+			createOpts.SecurityGroups = &req.SecurityGroupIDs
 		}
 		port, err := ports.Create(neutronClient, createOpts).Extract()
 		if err != nil {

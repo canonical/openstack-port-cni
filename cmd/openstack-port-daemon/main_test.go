@@ -262,6 +262,77 @@ func TestAddEndpoint(t *testing.T) {
 			t.Error("expected non-empty error message")
 		}
 	})
+
+	t.Run("WithSecurityGroups", func(t *testing.T) {
+		th.SetupHTTP()
+		defer th.TeardownHTTP()
+
+		th.Mux.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				t.Errorf("unexpected method %s on /ports", r.Method)
+			}
+			var reqBody struct {
+				Port struct {
+					SecurityGroups []string `json:"security_groups"`
+				} `json:"port"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+				t.Errorf("failed to decode request body: %v", err)
+			}
+			if len(reqBody.Port.SecurityGroups) != 2 {
+				t.Errorf("expected 2 security groups, got %d: %v", len(reqBody.Port.SecurityGroups), reqBody.Port.SecurityGroups)
+			} else {
+				if reqBody.Port.SecurityGroups[0] != "sg-id-1" {
+					t.Errorf("security_groups[0] = %q, want %q", reqBody.Port.SecurityGroups[0], "sg-id-1")
+				}
+				if reqBody.Port.SecurityGroups[1] != "sg-id-2" {
+					t.Errorf("security_groups[1] = %q, want %q", reqBody.Port.SecurityGroups[1], "sg-id-2")
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{
+				"port": {
+					"id": "port-uuid-sg",
+					"name": "k8s-pod-abcdef123456",
+					"mac_address": "fa:16:3e:aa:bb:cc",
+					"network_id": "net-uuid",
+					"fixed_ips": [{"subnet_id": "subnet-uuid", "ip_address": "10.0.0.5"}],
+					"status": "ACTIVE"
+				}
+			}`))
+		})
+
+		th.Mux.HandleFunc("/subnets/subnet-uuid", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{
+				"subnet": {
+					"id": "subnet-uuid",
+					"cidr": "10.0.0.0/24",
+					"gateway_ip": "10.0.0.1",
+					"network_id": "net-uuid"
+				}
+			}`))
+		})
+
+		handler := newHandler(thclient.ServiceClient())
+		body := bytes.NewBufferString(`{"container_id":"abcdef1234567890","network_id":"net-uuid","subnet_id":"subnet-uuid","security_group_ids":["sg-id-1","sg-id-2"]}`)
+		req := httptest.NewRequest(http.MethodPost, "/add", body)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var resp api.AddResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp.PortID != "port-uuid-sg" {
+			t.Errorf("PortID = %q, want %q", resp.PortID, "port-uuid-sg")
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
