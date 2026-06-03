@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -264,6 +266,36 @@ func buildAuthOpts() (gophercloud.AuthOptions, error) {
 	return opts, nil
 }
 
+// buildProviderClient creates a gophercloud ProviderClient from the given auth
+// options, optionally configuring a custom TLS CA certificate from OS_CACERT.
+// If OS_CACERT is set, its value is used as the path to a PEM-encoded CA
+// bundle that is loaded into the HTTP client's TLS trust store so the daemon
+// can authenticate against an OpenStack endpoint that uses a private CA.
+func buildProviderClient(authOpts gophercloud.AuthOptions) (*gophercloud.ProviderClient, error) {
+	provider, err := openstack.NewClient(authOpts.IdentityEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create provider client: %w", err)
+	}
+	if cacert := os.Getenv("OS_CACERT"); cacert != "" {
+		caCert, err := os.ReadFile(cacert)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA cert %s: %w", cacert, err)
+		}
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA cert from %s: no valid PEM blocks found", cacert)
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{RootCAs: pool}
+		provider.HTTPClient.Transport = transport
+		log.Printf("using CA cert from %s", cacert)
+	}
+	return provider, nil
+}
+
 func main() {
 	log.SetPrefix("[openstack-port-daemon] ")
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
@@ -274,8 +306,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to read OS_* env vars: %v", err)
 	}
-	provider, err := openstack.AuthenticatedClient(authOpts)
+	provider, err := buildProviderClient(authOpts)
 	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	if err := openstack.Authenticate(provider, authOpts); err != nil {
 		log.Fatalf("failed to authenticate with OpenStack: %v", err)
 	}
 	neutronClient, err := openstack.NewNetworkV2(provider, gophercloud.EndpointOpts{})

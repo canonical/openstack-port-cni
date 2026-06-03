@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
+	"github.com/gophercloud/gophercloud"
 	th "github.com/gophercloud/gophercloud/testhelper"
 	thclient "github.com/gophercloud/gophercloud/testhelper/client"
 
@@ -51,6 +53,110 @@ func TestBuildAuthOptsAllowReauth(t *testing.T) {
 	}
 	if !opts.AllowReauth {
 		t.Error("AllowReauth = false; want true so expired tokens are renewed automatically")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestBuildProviderClient
+// ---------------------------------------------------------------------------
+
+// TestBuildProviderClientNoCACert verifies that buildProviderClient succeeds
+// and uses the default HTTP client when OS_CACERT is not set.
+func TestBuildProviderClientNoCACert(t *testing.T) {
+	t.Setenv("OS_CACERT", "")
+	opts := gophercloud.AuthOptions{IdentityEndpoint: "http://keystone.example.com/v3"}
+	provider, err := buildProviderClient(opts)
+	if err != nil {
+		t.Fatalf("buildProviderClient() error = %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected non-nil provider")
+	}
+	// Default HTTP client has no custom transport
+	if provider.HTTPClient.Transport != nil {
+		t.Error("expected nil Transport when OS_CACERT not set")
+	}
+}
+
+// TestBuildProviderClientWithCACert verifies that buildProviderClient loads
+// the CA cert from OS_CACERT and configures a custom TLS transport.
+func TestBuildProviderClientWithCACert(t *testing.T) {
+	// A real self-signed CA cert in PEM format (used only to verify parsing).
+	caPEM := `-----BEGIN CERTIFICATE-----
+MIIDBTCCAe2gAwIBAgIUNvBV8KY9DTxUoueYDkZoY1Y7VmgwDQYJKoZIhvcNAQEL
+BQAwEjEQMA4GA1UEAwwHdGVzdC1jYTAeFw0yNjA2MDMxMjM3MzhaFw0yNjA2MDQx
+MjM3MzhaMBIxEDAOBgNVBAMMB3Rlc3QtY2EwggEiMA0GCSqGSIb3DQEBAQUAA4IB
+DwAwggEKAoIBAQDHfEAuSirOGJmN8BMNfRojx2eHkY/oL7seGnk3oxHn5XdGEllX
+Y3goiKAbO5vJGTxjT9oirujp1HWRnyVziNHzJ51sfwuxF0jE/u9K+pWSqOeuy26p
+GcwJ9bPPdW0gnOFhqw2mweBLav0ETjj37a14/xdc0ynqtSGy0c+Hkn9egUJIhM9h
+NYIgC6NzZ9u8FasXXUIW0Ln2H8esvUA0YWsQQ4lcuvmNaA6IWm/IE26MEmSSK+32
+p1ukSE3miL/7AjerYle5xcKnqcT0eSKrK0rWZ9n46MIALE+iPwn9Fpgh8e4ZSEXh
+XvGkcUs1SwOkA42+LK3I0GKv1Zb6ZJ6a7GE7AgMBAAGjUzBRMB0GA1UdDgQWBBQ0
+xiFcCxzyyzJAUj6wmknoxi+XwjAfBgNVHSMEGDAWgBQ0xiFcCxzyyzJAUj6wmkno
+xi+XwjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQBn1/9AWshx
+3j0q8rdLGFVDmDqyDbppikw+Vja2GTxIoKCTEhM5SEyppnjbkJF0X/p+WMNyjcI6
+IaNQbo4TXhymBVtVbGO6v704ZjXGnMapepF/oD+WTjdna/rAG0eDZ5vPek2RS2Rx
+5i84TynXpyOSx3om/f1Y2wfa1rMKq1uX4yiqKUy54TEid0K5ttYVOEBdGFeolMHo
+sOj+eAmWUGNChJcxTaKe8pOWVmAUL0GuEF65V8T6dQZMolQ/Rckxy/QUrHIeNOQe
+wjMqDGNfnZ2f/CscL+9bdCsKruPQ4CCGJCDOR9JlE9qKQR/NMlAbatQS6RnFeyiU
+hOuO52ihZuYA
+-----END CERTIFICATE-----
+`
+	f, err := os.CreateTemp(t.TempDir(), "ca-*.pem")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	if _, err := f.WriteString(caPEM); err != nil {
+		t.Fatalf("write PEM: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close temp file: %v", err)
+	}
+
+	t.Setenv("OS_CACERT", f.Name())
+	opts := gophercloud.AuthOptions{IdentityEndpoint: "http://keystone.example.com/v3"}
+	provider, err := buildProviderClient(opts)
+	if err != nil {
+		t.Fatalf("buildProviderClient() error = %v", err)
+	}
+	if provider == nil {
+		t.Fatal("expected non-nil provider")
+	}
+	if provider.HTTPClient.Transport == nil {
+		t.Error("expected non-nil Transport when OS_CACERT is set")
+	}
+}
+
+// TestBuildProviderClientMissingCACertFile verifies that buildProviderClient
+// returns an error when OS_CACERT points to a non-existent file.
+func TestBuildProviderClientMissingCACertFile(t *testing.T) {
+	t.Setenv("OS_CACERT", "/nonexistent/path/ca.pem")
+	opts := gophercloud.AuthOptions{IdentityEndpoint: "http://keystone.example.com/v3"}
+	_, err := buildProviderClient(opts)
+	if err == nil {
+		t.Fatal("expected error for missing CA cert file, got nil")
+	}
+}
+
+// TestBuildProviderClientInvalidCACert verifies that buildProviderClient
+// returns an error when OS_CACERT points to a file with invalid PEM content.
+func TestBuildProviderClientInvalidCACert(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "ca-invalid-*.pem")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	if _, err := f.WriteString("this is not a valid PEM certificate"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close temp file: %v", err)
+	}
+
+	t.Setenv("OS_CACERT", f.Name())
+	opts := gophercloud.AuthOptions{IdentityEndpoint: "http://keystone.example.com/v3"}
+	_, err = buildProviderClient(opts)
+	if err == nil {
+		t.Fatal("expected error for invalid PEM content, got nil")
 	}
 }
 
